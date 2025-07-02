@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -132,11 +133,90 @@
             margin-bottom: 5px;
         }
         
-        .legend-color {
-            width: 20px;
-            height: 3px;
-            margin-right: 8px;
+        .date-range-container {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            display: none;
+        }
+        
+        .date-range-slider {
+            position: relative;
+            height: 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 20px;
+            margin: 15px 0;
+        }
+        
+        .date-range-track {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: rgba(255,255,255,0.3);
+            transform: translateY(-50%);
             border-radius: 2px;
+        }
+        
+        .date-range-fill {
+            position: absolute;
+            top: 50%;
+            height: 4px;
+            background: white;
+            transform: translateY(-50%);
+            border-radius: 2px;
+            transition: all 0.2s ease;
+        }
+        
+        .date-range-handle {
+            position: absolute;
+            top: 50%;
+            width: 20px;
+            height: 20px;
+            background: white;
+            border: 3px solid #667eea;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            cursor: pointer;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            transition: all 0.2s ease;
+        }
+        
+        .date-range-handle:hover {
+            transform: translate(-50%, -50%) scale(1.2);
+            box-shadow: 0 3px 8px rgba(0,0,0,0.3);
+        }
+        
+        .date-range-handle.active {
+            border-color: #764ba2;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.3);
+        }
+        
+        .date-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #666;
+            margin-top: 10px;
+        }
+        
+        .date-selection {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 10px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 6px;
+        }
+        
+        .date-value {
+            font-weight: bold;
+            color: #333;
+            font-size: 14px;
         }
     </style>
 </head>
@@ -158,14 +238,28 @@
                 <p style="font-size: 12px; color: #666; margin-top: 5px;">Default: locations</p>
             </div>
             
-            <div class="control-group">
-                <label for="startDate">Start Date:</label>
-                <input type="date" id="startDate" />
-            </div>
-            
-            <div class="control-group">
-                <label for="endDate">End Date:</label>
-                <input type="date" id="endDate" />
+            <div class="date-range-container" id="dateRangeContainer">
+                <h4 style="margin: 0 0 15px 0; color: #333;">Date Range Selection</h4>
+                <div class="date-range-slider" id="dateRangeSlider">
+                    <div class="date-range-track"></div>
+                    <div class="date-range-fill" id="dateRangeFill"></div>
+                    <div class="date-range-handle" id="startHandle" style="left: 0%;"></div>
+                    <div class="date-range-handle" id="endHandle" style="left: 100%;"></div>
+                </div>
+                <div class="date-labels" id="dateLabels">
+                    <span id="minDateLabel">-</span>
+                    <span id="maxDateLabel">-</span>
+                </div>
+                <div class="date-selection">
+                    <div>
+                        <small>Start:</small>
+                        <div class="date-value" id="selectedStartDate">-</div>
+                    </div>
+                    <div>
+                        <small>End:</small>
+                        <div class="date-value" id="selectedEndDate">-</div>
+                    </div>
+                </div>
             </div>
             
             <button onclick="updateMap()">Update Map</button>
@@ -196,8 +290,131 @@
         let trackData = [];
         let polylineGroup = L.layerGroup();
         let db = null;
+        let dateRange = { min: null, max: null };
+        let selectedRange = { start: 0, end: 100 }; // percentages
+        let isDragging = false;
+        let activeHandle = null;
         
-        // Initialize map
+        // Initialize date range slider
+        function initDateRangeSlider() {
+            const slider = document.getElementById('dateRangeSlider');
+            const startHandle = document.getElementById('startHandle');
+            const endHandle = document.getElementById('endHandle');
+            
+            function handleMouseDown(e, handle) {
+                e.preventDefault();
+                isDragging = true;
+                activeHandle = handle;
+                document.addEventListener('mousemove', handleMouseMove);
+                document.addEventListener('mouseup', handleMouseUp);
+                handle.classList.add('active');
+            }
+            
+            function handleMouseMove(e) {
+                if (!isDragging || !activeHandle) return;
+                
+                const rect = slider.getBoundingClientRect();
+                const percentage = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+                
+                if (activeHandle === startHandle) {
+                    selectedRange.start = Math.min(percentage, selectedRange.end - 1);
+                } else {
+                    selectedRange.end = Math.max(percentage, selectedRange.start + 1);
+                }
+                
+                updateSliderUI();
+                updateSelectedDates();
+            }
+            
+            function handleMouseUp() {
+                isDragging = false;
+                if (activeHandle) {
+                    activeHandle.classList.remove('active');
+                    activeHandle = null;
+                }
+                document.removeEventListener('mousemove', handleMouseMove);
+                document.removeEventListener('mouseup', handleMouseUp);
+                updateMap();
+            }
+            
+            startHandle.addEventListener('mousedown', (e) => handleMouseDown(e, startHandle));
+            endHandle.addEventListener('mousedown', (e) => handleMouseDown(e, endHandle));
+            
+            // Touch events for mobile
+            startHandle.addEventListener('touchstart', (e) => handleMouseDown(e.touches[0], startHandle));
+            endHandle.addEventListener('touchstart', (e) => handleMouseDown(e.touches[0], endHandle));
+            
+            slider.addEventListener('touchmove', (e) => {
+                if (isDragging) {
+                    e.preventDefault();
+                    handleMouseMove(e.touches[0]);
+                }
+            });
+            
+            slider.addEventListener('touchend', handleMouseUp);
+        }
+        
+        // Update slider visual elements
+        function updateSliderUI() {
+            const startHandle = document.getElementById('startHandle');
+            const endHandle = document.getElementById('endHandle');
+            const fill = document.getElementById('dateRangeFill');
+            
+            startHandle.style.left = selectedRange.start + '%';
+            endHandle.style.left = selectedRange.end + '%';
+            fill.style.left = selectedRange.start + '%';
+            fill.style.width = (selectedRange.end - selectedRange.start) + '%';
+        }
+        
+        // Update selected date display
+        function updateSelectedDates() {
+            if (!dateRange.min || !dateRange.max) return;
+            
+            const totalDays = (dateRange.max - dateRange.min) / (1000 * 60 * 60 * 24);
+            const startDays = (selectedRange.start / 100) * totalDays;
+            const endDays = (selectedRange.end / 100) * totalDays;
+            
+            const startDate = new Date(dateRange.min.getTime() + startDays * 24 * 60 * 60 * 1000);
+            const endDate = new Date(dateRange.min.getTime() + endDays * 24 * 60 * 60 * 1000);
+            
+            document.getElementById('selectedStartDate').textContent = startDate.toISOString().split('T')[0];
+            document.getElementById('selectedEndDate').textContent = endDate.toISOString().split('T')[0];
+        }
+        
+        // Setup date range slider with data
+        function setupDateRangeSlider(minDate, maxDate) {
+            dateRange.min = minDate;
+            dateRange.max = maxDate;
+            
+            // Update labels
+            document.getElementById('minDateLabel').textContent = minDate.toISOString().split('T')[0];
+            document.getElementById('maxDateLabel').textContent = maxDate.toISOString().split('T')[0];
+            
+            // Reset to full range
+            selectedRange = { start: 0, end: 100 };
+            updateSliderUI();
+            updateSelectedDates();
+            
+            // Show the date range container
+            document.getElementById('dateRangeContainer').style.display = 'block';
+        }
+        
+        // Get selected date range
+        function getSelectedDateRange() {
+            if (!dateRange.min || !dateRange.max) return null;
+            
+            const totalDays = (dateRange.max - dateRange.min) / (1000 * 60 * 60 * 24);
+            const startDays = (selectedRange.start / 100) * totalDays;
+            const endDays = (selectedRange.end / 100) * totalDays;
+            
+            const startDate = new Date(dateRange.min.getTime() + startDays * 24 * 60 * 60 * 1000);
+            const endDate = new Date(dateRange.min.getTime() + endDays * 24 * 60 * 60 * 1000);
+            
+            return {
+                start: startDate.toISOString().split('T')[0],
+                end: endDate.toISOString().split('T')[0]
+            };
+        }
         function initMap() {
             map = L.map('map').setView([45.5017, -73.5673], 10); // Montreal coordinates
             
@@ -245,14 +462,12 @@
         function loadSampleData() {
             trackData = generateSampleData();
             
-            // Set date range based on sample data
-            const dates = trackData.map(d => d.timestamp);
-            const minDate = Math.min(...dates.map(d => new Date(d)));
-            const maxDate = Math.max(...dates.map(d => new Date(d)));
+            // Set up date range slider
+            const dates = trackData.map(d => new Date(d.timestamp));
+            const minDate = new Date(Math.min(...dates));
+            const maxDate = new Date(Math.max(...dates));
             
-            document.getElementById('startDate').value = new Date(minDate).toISOString().split('T')[0];
-            document.getElementById('endDate').value = new Date(maxDate).toISOString().split('T')[0];
-            
+            setupDateRangeSlider(minDate, maxDate);
             updateMap();
         }
         
@@ -338,8 +553,26 @@
                     const latitude = record.latitude || record.lat || record.y;
                     const longitude = record.longitude || record.lng || record.lon || record.x;
                     
+                    // Handle timestamp - could be in seconds or milliseconds
+                    let processedTimestamp = '2024-01-01';
+                    if (timestamp) {
+                        let timestampMs;
+                        if (typeof timestamp === 'number') {
+                            // If timestamp is a number, check if it's in seconds or milliseconds
+                            // Timestamps in seconds are typically 10 digits, in milliseconds are 13 digits
+                            timestampMs = timestamp.toString().length <= 10 ? timestamp * 1000 : timestamp;
+                        } else {
+                            // If it's a string, try to parse it directly
+                            timestampMs = new Date(timestamp).getTime();
+                        }
+                        
+                        if (!isNaN(timestampMs)) {
+                            processedTimestamp = new Date(timestampMs).toISOString().split('T')[0];
+                        }
+                    }
+                    
                     return {
-                        timestamp: timestamp ? new Date(timestamp).toISOString().split('T')[0] : '2024-01-01',
+                        timestamp: processedTimestamp,
                         latitude: parseFloat(latitude) || 0,
                         longitude: parseFloat(longitude) || 0
                     };
@@ -352,14 +585,12 @@
                 
                 console.log(`Loaded ${trackData.length} GPS points from table: ${tableName}`);
                 
-                // Set date range
-                const dates = trackData.map(d => d.timestamp);
-                const minDate = Math.min(...dates.map(d => new Date(d)));
-                const maxDate = Math.max(...dates.map(d => new Date(d)));
+                // Set up date range slider
+                const dates = trackData.map(d => new Date(d.timestamp));
+                const minDate = new Date(Math.min(...dates));
+                const maxDate = new Date(Math.max(...dates));
                 
-                document.getElementById('startDate').value = new Date(minDate).toISOString().split('T')[0];
-                document.getElementById('endDate').value = new Date(maxDate).toISOString().split('T')[0];
-                
+                setupDateRangeSlider(minDate, maxDate);
                 updateMap();
                 
             } catch (error) {
@@ -382,12 +613,14 @@
         
         // Update map with filtered data
         function updateMap() {
-            const startDate = document.getElementById('startDate').value;
-            const endDate = document.getElementById('endDate').value;
+            const dateSelection = getSelectedDateRange();
             
-            if (!startDate || !endDate || trackData.length === 0) {
+            if (!dateSelection || trackData.length === 0) {
                 return;
             }
+            
+            const startDate = dateSelection.start;
+            const endDate = dateSelection.end;
             
             // Clear existing polylines
             polylineGroup.clearLayers();
@@ -448,7 +681,8 @@
             
             // Fit map to show all tracks
             if (polylineGroup.getLayers().length > 0) {
-                map.fitBounds(polylineGroup.getBounds(), { padding: [20, 20] });
+                const group = L.featureGroup(polylineGroup.getLayers());
+                map.fitBounds(group.getBounds(), { padding: [20, 20] });
             }
             
             // Update statistics
