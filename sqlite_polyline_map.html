@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SQLite Polyline Map Viewer</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background: #f5f5f5;
+        }
+        
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        .sidebar {
+            width: 320px;
+            background: white;
+            padding: 20px;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+            overflow-y: auto;
+        }
+        
+        .map-container {
+            flex: 1;
+            position: relative;
+        }
+        
+        #map {
+            height: 100%;
+            width: 100%;
+        }
+        
+        .control-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        input[type="date"] {
+            width: 100%;
+            padding: 8px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        input[type="date"]:focus {
+            border-color: #4CAF50;
+            outline: none;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            width: 100%;
+            margin-top: 10px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        .stats {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        
+        .stats h3 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+        }
+        
+        .stats p {
+            margin: 5px 0;
+            font-size: 14px;
+        }
+        
+        .file-upload {
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 2px dashed #ddd;
+            border-radius: 8px;
+            text-align: center;
+            background: #fafafa;
+        }
+        
+        .file-upload input[type="file"] {
+            margin-top: 10px;
+        }
+        
+        .legend {
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            min-width: 150px;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+        
+        .legend-color {
+            width: 20px;
+            height: 3px;
+            margin-right: 8px;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h2 style="margin-top: 0; color: #333;">GPS Track Viewer</h2>
+            
+            <div class="file-upload">
+                <h4 style="margin-top: 0;">Upload SQLite File</h4>
+                <p style="font-size: 12px; color: #666;">Select your SQLite file with GPS data</p>
+                <input type="file" id="sqliteFile" accept=".sqlite,.sqlite3,.db" />
+            </div>
+            
+            <div class="control-group">
+                <label for="tableName">Table Name:</label>
+                <input type="text" id="tableName" value="locations" placeholder="Enter table name" 
+                       style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 4px; font-size: 14px;" />
+                <p style="font-size: 12px; color: #666; margin-top: 5px;">Default: locations</p>
+            </div>
+            
+            <div class="control-group">
+                <label for="startDate">Start Date:</label>
+                <input type="date" id="startDate" />
+            </div>
+            
+            <div class="control-group">
+                <label for="endDate">End Date:</label>
+                <input type="date" id="endDate" />
+            </div>
+            
+            <button onclick="updateMap()">Update Map</button>
+            <button onclick="reloadTable()" style="background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%); margin-top: 5px;">Reload Table</button>
+            <button onclick="loadSampleData()" style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);">Load Sample Data</button>
+            
+            <div class="stats" id="stats" style="display: none;">
+                <h3>Track Statistics</h3>
+                <p id="pointCount">Points: 0</p>
+                <p id="dateRange">Date Range: -</p>
+                <p id="trackCount">Tracks: 0</p>
+            </div>
+        </div>
+        
+        <div class="map-container">
+            <div id="map"></div>
+            <div class="legend" id="legend" style="display: none;">
+                <h4 style="margin: 0 0 10px 0;">Date Legend</h4>
+                <div id="legendContent"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.min.js"></script>
+    <script>
+        let map;
+        let trackData = [];
+        let polylineGroup = L.layerGroup();
+        let db = null;
+        
+        // Initialize map
+        function initMap() {
+            map = L.map('map').setView([45.5017, -73.5673], 10); // Montreal coordinates
+            
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(map);
+            
+            polylineGroup.addTo(map);
+        }
+        
+        // Generate sample data for demonstration
+        function generateSampleData() {
+            const sampleData = [];
+            const startDate = new Date('2024-01-01');
+            const endDate = new Date('2024-01-10');
+            
+            // Montreal area coordinates
+            const baseLat = 45.5017;
+            const baseLng = -73.5673;
+            
+            for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+                const pointsPerDay = 50 + Math.floor(Math.random() * 100);
+                
+                for (let i = 0; i < pointsPerDay; i++) {
+                    const timestamp = new Date(d);
+                    timestamp.setHours(Math.floor(Math.random() * 24));
+                    timestamp.setMinutes(Math.floor(Math.random() * 60));
+                    
+                    // Create a meandering path
+                    const offset = i * 0.001;
+                    const randomOffset = (Math.random() - 0.5) * 0.01;
+                    
+                    sampleData.push({
+                        timestamp: timestamp.toISOString().split('T')[0],
+                        latitude: baseLat + offset + randomOffset,
+                        longitude: baseLng + offset * 0.5 + randomOffset
+                    });
+                }
+            }
+            
+            return sampleData.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        }
+        
+        // Load sample data
+        function loadSampleData() {
+            trackData = generateSampleData();
+            
+            // Set date range based on sample data
+            const dates = trackData.map(d => d.timestamp);
+            const minDate = Math.min(...dates.map(d => new Date(d)));
+            const maxDate = Math.max(...dates.map(d => new Date(d)));
+            
+            document.getElementById('startDate').value = new Date(minDate).toISOString().split('T')[0];
+            document.getElementById('endDate').value = new Date(maxDate).toISOString().split('T')[0];
+            
+            updateMap();
+        }
+        
+        // Load SQLite file
+        async function loadSQLiteFile(file) {
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const SQL = await initSqlJs({
+                    locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
+                });
+                
+                db = new SQL.Database(new Uint8Array(arrayBuffer));
+                
+                // Get list of tables
+                const tables = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
+                if (tables.length === 0) {
+                    alert('No tables found in SQLite file');
+                    return;
+                }
+                
+                const tableNames = tables[0].values.map(row => row[0]);
+                console.log('Available tables:', tableNames);
+                
+                // Try to guess the best table name
+                let guessedTableName = 'locations'; // Default
+                
+                // Look for common GPS table names
+                const gpsTableNames = ['locations', 'location', 'gps', 'tracks', 'track', 'points', 'coordinates', 'coords'];
+                for (const name of gpsTableNames) {
+                    if (tableNames.find(t => t.toLowerCase() === name.toLowerCase())) {
+                        guessedTableName = tableNames.find(t => t.toLowerCase() === name.toLowerCase());
+                        break;
+                    }
+                }
+                
+                // If no GPS-related table found, use the first table
+                if (!tableNames.find(t => t.toLowerCase() === guessedTableName.toLowerCase()) && tableNames.length > 0) {
+                    guessedTableName = tableNames[0];
+                }
+                
+                // Update the UI with the guessed table name
+                document.getElementById('tableName').value = guessedTableName;
+                
+                // Load data from the guessed table
+                loadDataFromTable(guessedTableName);
+                
+            } catch (error) {
+                console.error('Error loading SQLite file:', error);
+                alert('Error loading SQLite file. Please check the file format.');
+            }
+        }
+        
+        // Load data from specified table
+        function loadDataFromTable(tableName) {
+            if (!db) {
+                alert('No SQLite file loaded');
+                return;
+            }
+            
+            try {
+                // Query the data - adjust column names as needed
+                const result = db.exec(`SELECT * FROM "${tableName}" LIMIT 1000`);
+                if (result.length === 0) {
+                    alert(`No data found in table: ${tableName}`);
+                    return;
+                }
+                
+                const columns = result[0].columns;
+                const rows = result[0].values;
+                
+                console.log('Table columns:', columns);
+                console.log('Sample row:', rows[0]);
+                
+                // Map the data (adjust column indices based on your SQLite structure)
+                trackData = rows.map(row => {
+                    const record = {};
+                    columns.forEach((col, index) => {
+                        record[col.toLowerCase()] = row[index];
+                    });
+                    
+                    // Try to find timestamp, latitude, longitude columns
+                    const timestamp = record.timestamp || record.date || record.time || record.datetime || record.created_at || record.recorded_at;
+                    const latitude = record.latitude || record.lat || record.y;
+                    const longitude = record.longitude || record.lng || record.lon || record.x;
+                    
+                    return {
+                        timestamp: timestamp ? new Date(timestamp).toISOString().split('T')[0] : '2024-01-01',
+                        latitude: parseFloat(latitude) || 0,
+                        longitude: parseFloat(longitude) || 0
+                    };
+                }).filter(record => record.latitude !== 0 && record.longitude !== 0);
+                
+                if (trackData.length === 0) {
+                    alert(`No valid GPS coordinates found in table: ${tableName}. Please check the table structure and column names.`);
+                    return;
+                }
+                
+                console.log(`Loaded ${trackData.length} GPS points from table: ${tableName}`);
+                
+                // Set date range
+                const dates = trackData.map(d => d.timestamp);
+                const minDate = Math.min(...dates.map(d => new Date(d)));
+                const maxDate = Math.max(...dates.map(d => new Date(d)));
+                
+                document.getElementById('startDate').value = new Date(minDate).toISOString().split('T')[0];
+                document.getElementById('endDate').value = new Date(maxDate).toISOString().split('T')[0];
+                
+                updateMap();
+                
+            } catch (error) {
+                console.error('Error loading data from table:', error);
+                alert(`Error loading data from table: ${tableName}. Please check the table name and structure.`);
+            }
+        }
+        
+        // Generate color for date
+        function getColorForDate(dateStr, allDates) {
+            const date = new Date(dateStr);
+            const minDate = Math.min(...allDates.map(d => new Date(d)));
+            const maxDate = Math.max(...allDates.map(d => new Date(d)));
+            
+            const ratio = (date - minDate) / (maxDate - minDate);
+            const hue = ratio * 300; // 0 to 300 degrees (red to purple)
+            
+            return `hsl(${hue}, 70%, 50%)`;
+        }
+        
+        // Update map with filtered data
+        function updateMap() {
+            const startDate = document.getElementById('startDate').value;
+            const endDate = document.getElementById('endDate').value;
+            
+            if (!startDate || !endDate || trackData.length === 0) {
+                return;
+            }
+            
+            // Clear existing polylines
+            polylineGroup.clearLayers();
+            
+            // Filter data by date range
+            const filteredData = trackData.filter(point => {
+                return point.timestamp >= startDate && point.timestamp <= endDate;
+            });
+            
+            if (filteredData.length === 0) {
+                document.getElementById('stats').style.display = 'none';
+                document.getElementById('legend').style.display = 'none';
+                return;
+            }
+            
+            // Group by date
+            const dateGroups = {};
+            filteredData.forEach(point => {
+                if (!dateGroups[point.timestamp]) {
+                    dateGroups[point.timestamp] = [];
+                }
+                dateGroups[point.timestamp].push([point.latitude, point.longitude]);
+            });
+            
+            // Get all unique dates for color generation
+            const allDates = Object.keys(dateGroups).sort();
+            
+            // Create polylines for each date
+            const legendContent = document.getElementById('legendContent');
+            legendContent.innerHTML = '';
+            
+            let totalPoints = 0;
+            
+            Object.keys(dateGroups).forEach(date => {
+                const points = dateGroups[date];
+                if (points.length > 1) {
+                    const color = getColorForDate(date, allDates);
+                    
+                    const polyline = L.polyline(points, {
+                        color: color,
+                        weight: 3,
+                        opacity: 0.8
+                    }).bindPopup(`Date: ${date}<br>Points: ${points.length}`);
+                    
+                    polylineGroup.addLayer(polyline);
+                    totalPoints += points.length;
+                    
+                    // Add to legend
+                    const legendItem = document.createElement('div');
+                    legendItem.className = 'legend-item';
+                    legendItem.innerHTML = `
+                        <div class="legend-color" style="background-color: ${color};"></div>
+                        <span style="font-size: 12px;">${date}</span>
+                    `;
+                    legendContent.appendChild(legendItem);
+                }
+            });
+            
+            // Fit map to show all tracks
+            if (polylineGroup.getLayers().length > 0) {
+                map.fitBounds(polylineGroup.getBounds(), { padding: [20, 20] });
+            }
+            
+            // Update statistics
+            document.getElementById('pointCount').textContent = `Points: ${totalPoints}`;
+            document.getElementById('dateRange').textContent = `Date Range: ${startDate} to ${endDate}`;
+            document.getElementById('trackCount').textContent = `Tracks: ${Object.keys(dateGroups).length}`;
+            document.getElementById('stats').style.display = 'block';
+            document.getElementById('legend').style.display = allDates.length > 1 ? 'block' : 'none';
+        }
+        
+        // Reload data from the specified table
+        function reloadTable() {
+            const tableName = document.getElementById('tableName').value.trim();
+            if (!tableName) {
+                alert('Please enter a table name');
+                return;
+            }
+            
+            if (!db) {
+                alert('No SQLite file loaded. Please upload a file first.');
+                return;
+            }
+            
+            loadDataFromTable(tableName);
+        }
+        
+        // File upload handler
+        document.getElementById('sqliteFile').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                loadSQLiteFile(file);
+            }
+        });
+        
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            initMap();
+            
+            // Set default dates
+            const today = new Date();
+            const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+            
+            document.getElementById('startDate').value = weekAgo.toISOString().split('T')[0];
+            document.getElementById('endDate').value = today.toISOString().split('T')[0];
+        });
+    </script>
+</body>
+</html>
